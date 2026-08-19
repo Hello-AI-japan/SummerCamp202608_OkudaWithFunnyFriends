@@ -1,2 +1,11 @@
-.env.local
+node_modules
 .env*
+.next
+next-env.d.ts
+/dist/
+.vinext/
+.wrangler/
+
+.dev.vars*
+!.dev.vars.example
+!.env.example
