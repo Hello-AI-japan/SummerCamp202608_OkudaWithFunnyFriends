@@ -28,6 +28,8 @@
   "type": "module",
   "scripts": {
     "dev": "vinext dev",
+    "test": "node --experimental-strip-types --test scripts/check-validation.mjs",
+    "check:rls": "node scripts/check-rls.mjs",
     "build": "vinext build",
     "start": "wrangler dev --config dist/server/wrangler.json",
     "deploy": "vinext-cloudflare deploy --config dist/server/wrangler.json",
