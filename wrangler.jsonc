@@ -4,7 +4,7 @@
  */
 {
 	"$schema": "node_modules/wrangler/config-schema.json",
-	"name": "dir",
+	"name": "summercamp-friends",
 	"compatibility_date": "2026-08-19",
 	"main": "vinext/server/fetch-handler",
 	"assets": {
