@@ -10,3 +10,4 @@ next-env.d.ts
 !.dev.vars.example
 !.env.example
 tsconfig.tsbuildinfo
+tsconfig.tsbuildinfo
