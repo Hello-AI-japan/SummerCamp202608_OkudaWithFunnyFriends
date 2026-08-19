@@ -1,8 +1,12 @@
 import Link from "next/link";
-import { getFriends } from "@/lib/friends/repository";
+import { createClient } from "@/lib/supabase/server";
+import { listFriends } from "@/lib/friends/repository";
+import { friendDisplayName } from "@/lib/friends/types";
 
 export default async function FriendsPage() {
-  const friends = await getFriends();
+  const supabase = await createClient();
+  const result = await listFriends(supabase);
+  const friends = result.ok ? result.data : [];
 
   return (
     <main className="min-h-screen bg-slate-50 px-6 py-10 text-slate-950">
@@ -17,7 +21,9 @@ export default async function FriendsPage() {
           </Link>
         </div>
 
-        {friends.length === 0 ? (
+        {!result.ok ? (
+          <p className="text-sm text-red-600">{result.errors.form[0] ?? "友達一覧の取得に失敗しました"}</p>
+        ) : friends.length === 0 ? (
           <p className="text-sm text-slate-600">まだ友達が登録されていません</p>
         ) : (
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -27,8 +33,8 @@ export default async function FriendsPage() {
                 href={`/friends/${friend.id}`}
                 key={friend.id}
               >
-                <h2 className="font-semibold">{friend.nickname || friend.real_name}</h2>
-                <p className="mt-2 text-sm text-slate-600">{friend.hometown}</p>
+                <h2 className="font-semibold">{friendDisplayName(friend)}</h2>
+                <p className="mt-2 text-sm text-slate-600">{friend.hometown ?? "-"}</p>
               </Link>
             ))}
           </div>

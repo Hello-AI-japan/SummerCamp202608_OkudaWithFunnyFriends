@@ -3,63 +3,69 @@
 import { useState, type FormEvent } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { createClient } from "@/lib/supabase/client";
 import { createFriend } from "@/lib/friends/repository";
+import {
+  ATTRIBUTE_KEY_FIELD,
+  ATTRIBUTE_VALUE_FIELD,
+  LIMITS,
+  parseFriendFormData,
+  type ValidationErrors,
+} from "@/lib/friends/validation";
 
-type CustomField = {
+const EMPTY_ERRORS: ValidationErrors = { form: [], fields: {}, attributes: {} };
+
+type AttributeRow = {
   id: string;
-  label: string;
+  key: string;
   value: string;
 };
 
-function createCustomField(): CustomField {
-  return { id: crypto.randomUUID(), label: "", value: "" };
+function createAttributeRow(): AttributeRow {
+  return { id: crypto.randomUUID(), key: "", value: "" };
 }
 
 export default function NewFriendPage() {
-  const [realName, setRealName] = useState("");
-  const [nickname, setNickname] = useState("");
-  const [hometown, setHometown] = useState("");
-  const [birthdate, setBirthdate] = useState("");
-  const [phoneNumber, setPhoneNumber] = useState("");
-  const [customFields, setCustomFields] = useState<CustomField[]>([]);
+  const [rows, setRows] = useState<AttributeRow[]>([]);
+  const [errors, setErrors] = useState<ValidationErrors>(EMPTY_ERRORS);
   const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const router = useRouter();
 
-  function addCustomField() {
-    setCustomFields((fields) => [...fields, createCustomField()]);
+  function addRow() {
+    setRows((current) => [...current, createAttributeRow()]);
   }
 
-  function removeCustomField(id: string) {
-    setCustomFields((fields) => fields.filter((field) => field.id !== id));
+  function removeRow(id: string) {
+    setRows((current) => current.filter((row) => row.id !== id));
   }
 
-  function updateCustomField(id: string, key: "label" | "value", value: string) {
-    setCustomFields((fields) =>
-      fields.map((field) => (field.id === id ? { ...field, [key]: value } : field)),
+  function updateRow(id: string, key: "key" | "value", value: string) {
+    setRows((current) =>
+      current.map((row) => (row.id === id ? { ...row, [key]: value } : row)),
     );
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    setError(null);
-    setSubmitting(true);
+    if (submitting) return;
 
-    try {
-      const friend = await createFriend({
-        real_name: realName,
-        nickname,
-        hometown,
-        birthdate,
-        phone_number: phoneNumber,
-        attributes: customFields.map(({ label, value }) => ({ label, value })),
-      });
-      router.push(`/friends/${friend.id}`);
-      router.refresh();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "登録に失敗しました");
+    setSubmitting(true);
+    setErrors(EMPTY_ERRORS);
+
+    const formData = new FormData(event.currentTarget);
+    const input = parseFriendFormData(formData);
+
+    const supabase = createClient();
+    const result = await createFriend(supabase, input);
+
+    if (!result.ok) {
+      setErrors(result.errors);
       setSubmitting(false);
+      return;
     }
+
+    router.push(`/friends/${result.data.id}`);
+    router.refresh();
   }
 
   return (
@@ -73,6 +79,14 @@ export default function NewFriendPage() {
         </div>
 
         <form className="flex flex-col gap-6" onSubmit={handleSubmit}>
+          {errors.form.length > 0 ? (
+            <div className="flex flex-col gap-1 rounded-md border border-red-300 bg-red-50 p-3 text-sm text-red-600">
+              {errors.form.map((message) => (
+                <p key={message}>{message}</p>
+              ))}
+            </div>
+          ) : null}
+
           <div className="flex flex-col gap-4">
             <div className="flex flex-col gap-1">
               <label className="text-sm font-medium" htmlFor="real_name">
@@ -81,11 +95,15 @@ export default function NewFriendPage() {
               <input
                 className="rounded-md border border-slate-300 px-3 py-2 text-sm outline-none focus:border-slate-500"
                 id="real_name"
-                onChange={(event) => setRealName(event.target.value)}
-                required
+                maxLength={LIMITS.TEXT_MAX}
+                name="real_name"
                 type="text"
-                value={realName}
               />
+              {errors.fields.real_name?.map((message) => (
+                <p className="text-sm text-red-600" key={message}>
+                  {message}
+                </p>
+              ))}
             </div>
 
             <div className="flex flex-col gap-1">
@@ -95,10 +113,15 @@ export default function NewFriendPage() {
               <input
                 className="rounded-md border border-slate-300 px-3 py-2 text-sm outline-none focus:border-slate-500"
                 id="nickname"
-                onChange={(event) => setNickname(event.target.value)}
+                maxLength={LIMITS.TEXT_MAX}
+                name="nickname"
                 type="text"
-                value={nickname}
               />
+              {errors.fields.nickname?.map((message) => (
+                <p className="text-sm text-red-600" key={message}>
+                  {message}
+                </p>
+              ))}
             </div>
 
             <div className="flex flex-col gap-1">
@@ -108,10 +131,15 @@ export default function NewFriendPage() {
               <input
                 className="rounded-md border border-slate-300 px-3 py-2 text-sm outline-none focus:border-slate-500"
                 id="hometown"
-                onChange={(event) => setHometown(event.target.value)}
+                maxLength={LIMITS.TEXT_MAX}
+                name="hometown"
                 type="text"
-                value={hometown}
               />
+              {errors.fields.hometown?.map((message) => (
+                <p className="text-sm text-red-600" key={message}>
+                  {message}
+                </p>
+              ))}
             </div>
 
             <div className="flex flex-col gap-1">
@@ -121,10 +149,14 @@ export default function NewFriendPage() {
               <input
                 className="rounded-md border border-slate-300 px-3 py-2 text-sm outline-none focus:border-slate-500"
                 id="birthdate"
-                onChange={(event) => setBirthdate(event.target.value)}
+                name="birthdate"
                 type="date"
-                value={birthdate}
               />
+              {errors.fields.birthdate?.map((message) => (
+                <p className="text-sm text-red-600" key={message}>
+                  {message}
+                </p>
+              ))}
             </div>
 
             <div className="flex flex-col gap-1">
@@ -134,55 +166,69 @@ export default function NewFriendPage() {
               <input
                 className="rounded-md border border-slate-300 px-3 py-2 text-sm outline-none focus:border-slate-500"
                 id="phone_number"
-                onChange={(event) => setPhoneNumber(event.target.value)}
+                maxLength={LIMITS.TEXT_MAX}
+                name="phone_number"
                 type="tel"
-                value={phoneNumber}
               />
+              {errors.fields.phone_number?.map((message) => (
+                <p className="text-sm text-red-600" key={message}>
+                  {message}
+                </p>
+              ))}
             </div>
           </div>
 
           <div className="flex flex-col gap-3">
             <h2 className="text-sm font-semibold">自由項目</h2>
 
-            {customFields.map((field) => (
-              <div className="flex items-start gap-2" key={field.id}>
-                <input
-                  aria-label="項目名"
-                  className="w-1/3 rounded-md border border-slate-300 px-3 py-2 text-sm outline-none focus:border-slate-500"
-                  onChange={(event) => updateCustomField(field.id, "label", event.target.value)}
-                  placeholder="項目名"
-                  type="text"
-                  value={field.label}
-                />
-                <input
-                  aria-label="値"
-                  className="flex-1 rounded-md border border-slate-300 px-3 py-2 text-sm outline-none focus:border-slate-500"
-                  onChange={(event) => updateCustomField(field.id, "value", event.target.value)}
-                  placeholder="値"
-                  type="text"
-                  value={field.value}
-                />
-                <button
-                  aria-label="この項目を削除"
-                  className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm hover:bg-slate-100"
-                  onClick={() => removeCustomField(field.id)}
-                  type="button"
-                >
-                  削除
-                </button>
+            {rows.map((row, index) => (
+              <div className="flex flex-col gap-1" key={row.id}>
+                <div className="flex items-start gap-2">
+                  <input
+                    aria-label="項目名"
+                    className="w-1/3 rounded-md border border-slate-300 px-3 py-2 text-sm outline-none focus:border-slate-500"
+                    maxLength={LIMITS.ATTRIBUTE_KEY_MAX}
+                    name={ATTRIBUTE_KEY_FIELD}
+                    onChange={(event) => updateRow(row.id, "key", event.target.value)}
+                    placeholder="項目名"
+                    type="text"
+                    value={row.key}
+                  />
+                  <input
+                    aria-label="値"
+                    className="flex-1 rounded-md border border-slate-300 px-3 py-2 text-sm outline-none focus:border-slate-500"
+                    maxLength={LIMITS.ATTRIBUTE_VALUE_MAX}
+                    name={ATTRIBUTE_VALUE_FIELD}
+                    onChange={(event) => updateRow(row.id, "value", event.target.value)}
+                    placeholder="値"
+                    type="text"
+                    value={row.value}
+                  />
+                  <button
+                    aria-label="この項目を削除"
+                    className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm hover:bg-slate-100"
+                    onClick={() => removeRow(row.id)}
+                    type="button"
+                  >
+                    削除
+                  </button>
+                </div>
+                {errors.attributes[index]?.map((message) => (
+                  <p className="text-sm text-red-600" key={message}>
+                    {message}
+                  </p>
+                ))}
               </div>
             ))}
 
             <button
               className="self-start rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium hover:bg-slate-100"
-              onClick={addCustomField}
+              onClick={addRow}
               type="button"
             >
               ＋項目を追加
             </button>
           </div>
-
-          {error ? <p className="text-sm text-red-600">{error}</p> : null}
 
           <button
             className="rounded-md bg-slate-950 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-50"
