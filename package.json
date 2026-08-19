@@ -4,6 +4,8 @@
   "private": true,
   "packageManager": "npm",
   "dependencies": {
+    "@supabase/ssr": "^0.12.4",
+    "@supabase/supabase-js": "^2.112.3",
     "@vinext/cloudflare": "latest",
     "react": "latest",
     "react-dom": "latest",
