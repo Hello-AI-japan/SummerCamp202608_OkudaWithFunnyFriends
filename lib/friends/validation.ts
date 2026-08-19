@@ -22,13 +22,27 @@
 /** 自由項目フォームの1行。A5 のフォームが行ごとに持つ状態と同じ形 */
 export type AttributeRow = { key: string; value: string };
 
-/** 固定項目のフィールド名（エラーの宛先に使う） */
+/** 友達の固定項目のフィールド名（エラーの宛先に使う） */
 export type FixedField =
   | 'real_name'
   | 'nickname'
   | 'hometown'
   | 'birthdate'
   | 'phone_number';
+
+/** 関係性フォームのフィールド名 */
+export type RelationshipField =
+  | 'friend_a_id'
+  | 'friend_b_id'
+  | 'relationship_type'
+  | 'note';
+
+/**
+ * エラーの宛先になり得るフィールド名。
+ * 友達フォームと関係性フォームでエラーの形を共通にしているので、
+ * 画面側のエラー表示コンポーネントを1つで使い回せる。
+ */
+export type FieldName = FixedField | RelationshipField;
 
 /** フォームから来る生の値。未入力は '' / null / undefined のどれでもよい */
 export type FriendFormInput = {
@@ -57,8 +71,8 @@ export type FriendPayload = {
 export type ValidationErrors = {
   /** フォーム全体に出すメッセージ（例：本名とニックネームが両方空） */
   form: string[];
-  /** 固定項目ごとのメッセージ */
-  fields: Partial<Record<FixedField, string[]>>;
+  /** 項目ごとのメッセージ */
+  fields: Partial<Record<FieldName, string[]>>;
   /** 自由項目のメッセージ。キーは「入力時の行インデックス」なので、その行の下に出せる */
   attributes: Record<number, string[]>;
 };
@@ -79,15 +93,33 @@ export const LIMITS = {
   ATTRIBUTE_ROWS_MAX: 20,
   /** 生年月日の下限。打ち間違い（例: 0202-01-01）の検出用 */
   BIRTHDATE_MIN_YEAR: 1900,
+  /** 関係性の種類（「同じサークル」など）の文字数上限 */
+  RELATIONSHIP_TYPE_MAX: 50,
+  /** 関係性のメモの文字数上限 */
+  RELATIONSHIP_NOTE_MAX: 500,
 } as const;
 
-const FIXED_FIELD_LABELS: Record<FixedField, string> = {
+const FIELD_LABELS: Record<FieldName, string> = {
   real_name: '本名',
   nickname: 'ニックネーム',
   hometown: '出身地',
   birthdate: '生年月日',
   phone_number: '電話番号',
+  friend_a_id: '1人目',
+  friend_b_id: '2人目',
+  relationship_type: '関係',
+  note: 'メモ',
 };
+
+/**
+ * uuid かどうか。
+ * id を DB に投げる前に確認するために使う。uuid でない文字列を投げると
+ * Postgres が 22P02 を返し、画面が500になってしまう。
+ * PostgREST のフィルタ文字列に id を埋め込む前の安全確認としても使っている。
+ */
+export function isUuid(value: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
+}
 
 // ---------------------------------------------------------------------
 // 小さなヘルパー
@@ -182,7 +214,7 @@ export function validateFriendInput(
     if (value !== null && value.length > LIMITS.TEXT_MAX) {
       addFieldError(
         field,
-        `${FIXED_FIELD_LABELS[field]}は${LIMITS.TEXT_MAX}文字以内で入力してください。`,
+        `${FIELD_LABELS[field]}は${LIMITS.TEXT_MAX}文字以内で入力してください。`,
       );
     }
   }
@@ -293,7 +325,7 @@ export function formatErrors(errors: ValidationErrors): string[] {
   const lines: string[] = [...errors.form];
   for (const [field, messages] of Object.entries(errors.fields)) {
     for (const message of messages ?? []) {
-      lines.push(`${FIXED_FIELD_LABELS[field as FixedField]}：${message}`);
+      lines.push(`${FIELD_LABELS[field as FieldName]}：${message}`);
     }
   }
   for (const [index, messages] of Object.entries(errors.attributes)) {
@@ -361,4 +393,131 @@ export function attributesToRows(
     key,
     value: value === null || value === undefined ? '' : String(value),
   }));
+}
+
+// ---------------------------------------------------------------------
+// 関係性のバリデーション（B9）
+// ---------------------------------------------------------------------
+
+/** 関係性フォームから来る生の値 */
+export type RelationshipFormInput = {
+  friend_a_id?: string | null;
+  friend_b_id?: string | null;
+  relationship_type?: string | null;
+  note?: string | null;
+  /**
+   * 向きのある関係かどうか。
+   * true のときは「a から見た b」の意味になる（例：a が先輩、b が後輩）。
+   * UI では「1人目 → 2人目」と向きが分かる見せ方にすること。
+   */
+  is_directional?: boolean;
+};
+
+/** friend_relationships にそのまま insert / update できる形 */
+export type RelationshipPayload = {
+  friend_a_id: string;
+  friend_b_id: string;
+  relationship_type: string;
+  note: string | null;
+  is_directional: boolean;
+};
+
+export type RelationshipValidationResult =
+  | { ok: true; data: RelationshipPayload }
+  | { ok: false; errors: ValidationErrors };
+
+/** 関係の種類の入力候補（C8 の datalist 用）。自由入力も許す */
+export const RELATIONSHIP_TYPE_SUGGESTIONS = [
+  '同じサークル',
+  '同じ大学',
+  '同じ高校',
+  '同じバイト先',
+  '先輩・後輩',
+  '紹介してくれた人',
+] as const;
+
+/**
+ * 関係性の入力を検証する。
+ * DB側の制約（no_self_relationship と一意インデックス）と同じ条件を
+ * こちらでも見て、日本語のメッセージを返す。
+ */
+export function validateRelationshipInput(
+  input: RelationshipFormInput,
+): RelationshipValidationResult {
+  const errors: ValidationErrors = { form: [], fields: {}, attributes: {} };
+  const addFieldError = (field: RelationshipField, message: string): void => {
+    const list = errors.fields[field] ?? [];
+    list.push(message);
+    errors.fields[field] = list;
+  };
+
+  const friend_a_id = trimToNull(input.friend_a_id);
+  const friend_b_id = trimToNull(input.friend_b_id);
+  const relationship_type = trimToNull(input.relationship_type);
+  const note = trimToNull(input.note);
+  const is_directional = input.is_directional === true;
+
+  // 2人が選ばれているか。id は DB に投げる前に uuid か確かめる
+  for (const [field, value] of [
+    ['friend_a_id', friend_a_id],
+    ['friend_b_id', friend_b_id],
+  ] as Array<[RelationshipField, string | null]>) {
+    if (value === null) {
+      addFieldError(field, '友達を選んでください。');
+    } else if (!isUuid(value)) {
+      addFieldError(field, '選択された友達が正しくありません。選び直してください。');
+    }
+  }
+
+  // 同じ人どうしは登録できない（DBの no_self_relationship と同じ条件）
+  if (friend_a_id !== null && friend_a_id === friend_b_id) {
+    errors.form.push('同じ人どうしの関係は登録できません。別の友達を選んでください。');
+  }
+
+  if (relationship_type === null) {
+    addFieldError('relationship_type', '関係を入力してください（例：同じサークル）。');
+  } else if (relationship_type.length > LIMITS.RELATIONSHIP_TYPE_MAX) {
+    addFieldError(
+      'relationship_type',
+      `関係は${LIMITS.RELATIONSHIP_TYPE_MAX}文字以内で入力してください。`,
+    );
+  }
+
+  if (note !== null && note.length > LIMITS.RELATIONSHIP_NOTE_MAX) {
+    addFieldError('note', `メモは${LIMITS.RELATIONSHIP_NOTE_MAX}文字以内で入力してください。`);
+  }
+
+  if (hasErrors(errors)) return { ok: false, errors };
+
+  return {
+    ok: true,
+    data: {
+      // ここまで来ていれば null ではないが、型を絞るために改めて確認する
+      friend_a_id: friend_a_id as string,
+      friend_b_id: friend_b_id as string,
+      relationship_type: relationship_type as string,
+      note,
+      is_directional,
+    },
+  };
+}
+
+/**
+ * 関係性フォームの FormData を RelationshipFormInput に変換する（C8 用）。
+ * is_directional はチェックボックスなので、送られてきていれば true とみなす。
+ */
+export function parseRelationshipFormData(formData: FormData): RelationshipFormInput {
+  const text = (name: string): string => {
+    const value = formData.get(name);
+    return typeof value === 'string' ? value : '';
+  };
+  const checked = formData.get('is_directional');
+
+  return {
+    friend_a_id: text('friend_a_id'),
+    friend_b_id: text('friend_b_id'),
+    relationship_type: text('relationship_type'),
+    note: text('note'),
+    is_directional: checked !== null && checked !== '' && checked !== 'false',
+  };
 }

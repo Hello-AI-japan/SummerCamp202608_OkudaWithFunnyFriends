@@ -20,81 +20,23 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 
-import type { Friend, FriendAttributes } from './types';
 import {
-  validateFriendInput,
-  type FriendFormInput,
-  type ValidationErrors,
-} from './validation';
+  failure,
+  fromDatabaseError,
+  requireUuid,
+  type Result,
+} from './result';
+import type { Friend, FriendAttributes } from './types';
+import { validateFriendInput, type FriendFormInput } from './validation';
+
+// 画面側が import 元を1つで済ませられるよう、戻り値の型はここからも出す
+export type { Failure, Result } from './result';
 
 const TABLE = 'friends';
 
 /** 一覧・詳細で取り出す列。* だと将来列が増えたときに気づけないので明示する */
 const COLUMNS =
   'id, owner_id, real_name, nickname, hometown, birthdate, phone_number, attributes, created_at, updated_at';
-
-export type Failure = {
-  ok: false;
-  errors: ValidationErrors;
-  /** 存在しない、または他人のデータ。詳細画面の「見つかりません」表示に使う */
-  notFound?: true;
-};
-
-export type Result<T> = { ok: true; data: T } | Failure;
-
-// ---------------------------------------------------------------------
-// エラーの組み立て
-// ---------------------------------------------------------------------
-
-/** フォーム全体へのメッセージ1件だけを持つ失敗を作る */
-function failure(message: string, notFound?: true): Failure {
-  const errors: ValidationErrors = { form: [message], fields: {}, attributes: {} };
-  return notFound === true ? { ok: false, errors, notFound } : { ok: false, errors };
-}
-
-/** PostgREST のエラーを、そのまま画面に出せる日本語に変える */
-function fromDatabaseError(error: { code?: string; message: string }): Failure {
-  switch (error.code) {
-    // check 制約。DB側の最後の砦に当たった＝アプリ側の検証をすり抜けた入力
-    case '23514':
-      if (error.message.includes('name_required')) {
-        return failure('本名かニックネームのどちらかは入力してください。');
-      }
-      if (error.message.includes('no_self_relationship')) {
-        return failure('同じ人どうしの関係は登録できません。');
-      }
-      return failure('入力内容が条件を満たしていません。');
-
-    // 一意制約。関係性の重複（同じ2人・同じ関係タイプ）
-    case '23505':
-      return failure('同じ内容がすでに登録されています。');
-
-    // 外部キー違反。参照先の友達が削除済み
-    case '23503':
-      return failure('対象の友達が見つかりません。すでに削除された可能性があります。');
-
-    // not null 違反。owner_id が入らない＝auth.uid() が null＝ログインが切れている
-    case '23502':
-      return failure('ログインの有効期限が切れています。もう一度ログインしてください。');
-
-    // RLS で拒否された
-    case '42501':
-      return failure('このデータを操作する権限がありません。');
-
-    // uuid や date の形式違い。URL を直打ちされた場合など
-    case '22P02':
-      return failure('指定されたデータが見つかりません。', true);
-
-    // JWT 切れ
-    case 'PGRST301':
-      return failure('ログインの有効期限が切れています。もう一度ログインしてください。');
-
-    default:
-      // 想定外はサーバーログに残す（画面には出さない）
-      console.error('[friends] 予期しないDBエラー', error);
-      return failure(`保存できませんでした。（詳細: ${error.message}）`);
-  }
-}
 
 // ---------------------------------------------------------------------
 // 行 → Friend への変換
@@ -128,17 +70,6 @@ function toFriend(row: Record<string, unknown>): Friend {
   };
 }
 
-const UUID_PATTERN =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-/**
- * uuid でない id は問い合わせる前に弾く。
- * そのまま送ると Postgres が 22P02 を返し、画面が500になってしまう。
- * 「見つかりません」として扱うのが正しい（/friends/abc を直打ちされた場合）。
- */
-function invalidId(id: string): Failure | null {
-  return UUID_PATTERN.test(id) ? null : failure('指定された友達が見つかりません。', true);
-}
 
 // ---------------------------------------------------------------------
 // CRUD
@@ -167,7 +98,7 @@ export async function getFriend(
   supabase: SupabaseClient,
   id: string,
 ): Promise<Result<Friend>> {
-  const rejected = invalidId(id);
+  const rejected = requireUuid(id, '友達');
   if (rejected) return rejected;
 
   const { data, error } = await supabase
@@ -212,7 +143,7 @@ export async function updateFriend(
   id: string,
   input: FriendFormInput,
 ): Promise<Result<Friend>> {
-  const rejected = invalidId(id);
+  const rejected = requireUuid(id, '友達');
   if (rejected) return rejected;
 
   const validated = validateFriendInput(input);
@@ -239,7 +170,7 @@ export async function deleteFriend(
   supabase: SupabaseClient,
   id: string,
 ): Promise<Result<null>> {
-  const rejected = invalidId(id);
+  const rejected = requireUuid(id, '友達');
   if (rejected) return rejected;
 
   const { data, error } = await supabase

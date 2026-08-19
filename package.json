@@ -28,7 +28,7 @@
   "type": "module",
   "scripts": {
     "dev": "vinext dev",
-    "test": "node --experimental-strip-types --import ./scripts/ts-resolve.mjs --test scripts/check-validation.mjs scripts/check-repository.mjs",
+    "test": "node --experimental-strip-types --import ./scripts/ts-resolve.mjs --test scripts/check-validation.mjs scripts/check-repository.mjs scripts/check-relationships.mjs",
     "check:rls": "node scripts/check-rls.mjs",
     "build": "vinext build",
     "start": "wrangler dev --config dist/server/wrangler.json",
